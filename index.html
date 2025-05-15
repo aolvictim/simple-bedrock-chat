@@ -199,6 +199,9 @@
     const userInput = document.getElementById('userInput');
     const sendButton = document.getElementById('sendButton');
 
+    // Generate a unique conversation ID for this session
+    const conversationId = Date.now().toString();
+
     // Helper functions
     function scrollToBottom() {
       chatContainer.scrollTop = chatContainer.scrollHeight;
@@ -268,8 +271,8 @@
         botDiv.className = 'message bot-message';
         botDiv.innerHTML = '<strong>AI Assistant:</strong> <span class="response-content"></span>';
         
-        // Start streaming
-        const eventSource = new EventSource(`http://localhost:3000/chat/stream?message=${encodeURIComponent(message)}`);
+        // Start streaming with conversation ID
+        const eventSource = new EventSource(`http://localhost:3000/chat/stream?message=${encodeURIComponent(message)}&conversationId=${conversationId}`);
         let fullResponse = '';
         let responseStarted = false;
 

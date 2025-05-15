@@ -11,15 +11,35 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Helper function to create message body
-const createMessageBody = (message) => ({
-  anthropic_version: "bedrock-2023-05-31",
-  max_tokens: 1000,
-  messages: [{
-    role: "user",
-    content: [{ type: "text", text: message }]
-  }]
-});
+// Store conversation history in memory
+const conversations = new Map();
+
+// Helper function to create message body with history
+const createMessageBody = (message, conversationId) => {
+  const history = conversations.get(conversationId) || [];
+  const messages = [
+    ...history,
+    {
+      role: "user",
+      content: [{ type: "text", text: message }]
+    }
+  ];
+  return {
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 1000,
+    messages
+  };
+};
+
+// Helper function to update conversation history
+const updateConversationHistory = (conversationId, userMessage, assistantMessage) => {
+  const history = conversations.get(conversationId) || [];
+  history.push(
+    { role: "user", content: [{ type: "text", text: userMessage }] },
+    { role: "assistant", content: [{ type: "text", text: assistantMessage }] }
+  );
+  conversations.set(conversationId, history);
+};
 
 // Regular non-streaming endpoint (keeping for backup)
 app.post('/chat', async (req, res) => {
@@ -67,7 +87,7 @@ app.post('/chat', async (req, res) => {
 
 // Streaming chat endpoint
 app.get('/chat/stream', async (req, res) => {
-  const { message } = req.query;
+  const { message, conversationId = 'default' } = req.query;
   if (!message) {
     return res.status(400).send('Message is required');
   }
@@ -85,11 +105,12 @@ app.get('/chat/stream', async (req, res) => {
       modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
       contentType: 'application/json',
       accept: 'application/json',
-      body: JSON.stringify(createMessageBody(message))
+      body: JSON.stringify(createMessageBody(message, conversationId))
     });
 
     const response = await bedrock.send(command);
     const stream = response.body;
+    let fullAssistantResponse = '';
 
     for await (const chunk of stream) {
       if (!chunk.chunk?.bytes) continue;
@@ -98,8 +119,11 @@ app.get('/chat/stream', async (req, res) => {
         const chunkData = JSON.parse(Buffer.from(chunk.chunk.bytes).toString());
         
         if (chunkData.type === 'content_block_delta' && chunkData.delta?.text) {
+          fullAssistantResponse += chunkData.delta.text;
           res.write(`data: ${JSON.stringify({ content: chunkData.delta.text })}\n\n`);
         } else if (chunkData.type === 'message_stop') {
+          // Update conversation history when the message is complete
+          updateConversationHistory(conversationId, message, fullAssistantResponse);
           res.write('data: [DONE]\n\n');
         }
       } catch (error) {
