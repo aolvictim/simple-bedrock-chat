@@ -4,7 +4,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
-const session = require('express-session');
 const path = require('path');
 const { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 
@@ -12,17 +11,14 @@ const { BedrockRuntimeClient, InvokeModelWithResponseStreamCommand } = require('
 const bedrock = new BedrockRuntimeClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const app = express();
 
+// Store OAuth state in memory
+const oauthStates = new Map();
+
 app.use(cors({
   origin: 'http://localhost:3000',
   credentials: true
 }));
 app.use(express.json());
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'default-secret-key',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { secure: false } // Set to true in production with HTTPS
-}));
 
 // Serve index.html at root
 app.get('/', (req, res) => {
@@ -73,20 +69,27 @@ function requireAuth(req, res, next) {
 
 // Auth routes
 app.get('/auth/login', (req, res) => {
-  // Generate and store state for CSRF protection
+  // Generate state and store with timestamp
   const state = generateSecureRandomString();
-  req.session.oauth_state = state;
-  
-  // Generate nonce
   const nonce = generateSecureRandomString();
-  req.session.oauth_nonce = nonce;
-  
-  // Generate code verifier and challenge for PKCE
   const codeVerifier = generateSecureRandomString();
   const codeChallenge = crypto.createHash('sha256')
     .update(codeVerifier)
     .digest('base64url');
-  req.session.code_verifier = codeVerifier;
+
+  // Store OAuth values with 5 minute expiry
+  oauthStates.set(state, {
+    nonce,
+    codeVerifier,
+    timestamp: Date.now()
+  });
+
+  // Clean up expired states
+  for (const [storedState, data] of oauthStates.entries()) {
+    if (Date.now() - data.timestamp > 5 * 60 * 1000) {
+      oauthStates.delete(storedState);
+    }
+  }
 
   const authUrl = new URL(process.env.AUTH_URL);
   authUrl.searchParams.append('client_id', process.env.CLIENT_ID);
@@ -104,13 +107,16 @@ app.get('/auth/login', (req, res) => {
 app.get('/auth/callback', async (req, res) => {
   const { code, state } = req.query;
 
-  // Verify state to prevent CSRF
-  if (state !== req.session.oauth_state) {
-    return res.status(400).send('Invalid state');
+  // Get and validate stored state
+  const storedData = oauthStates.get(state);
+  if (!storedData) {
+    return res.status(400).send('Invalid or expired state');
   }
 
+  // Clean up used state
+  oauthStates.delete(state);
+
   try {
-    // Exchange code for token
     const tokenResponse = await fetch(process.env.TOKEN_URL, {
       method: 'POST',
       headers: {
@@ -119,7 +125,7 @@ app.get('/auth/callback', async (req, res) => {
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         client_id: process.env.CLIENT_ID,
-        code_verifier: req.session.code_verifier,
+        code_verifier: storedData.codeVerifier,
         code: code,
         redirect_uri: process.env.REDIRECT_URI
       })
@@ -152,7 +158,6 @@ app.get('/auth/callback', async (req, res) => {
       refreshToken: tokens.refresh_token
     };
 
-    // Return tokens to frontend
     res.send(`
       <script>
         localStorage.setItem('tokens', '${JSON.stringify(tokenData)}');
@@ -166,7 +171,6 @@ app.get('/auth/callback', async (req, res) => {
 });
 
 app.get('/auth/logout', (req, res) => {
-  req.session.destroy();
   res.redirect('/');
 });
 
