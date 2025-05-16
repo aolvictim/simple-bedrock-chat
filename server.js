@@ -15,7 +15,7 @@ const app = express();
 const oauthStates = new Map();
 
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
   credentials: true
 }));
 app.use(express.json());
@@ -241,10 +241,10 @@ const updateConversationHistory = (conversationId, userMessage, assistantMessage
 async function fetchProfiles(token) {
   try {
     const [userResponse, companyResponse] = await Promise.all([
-      fetch('https://enterprise.ft3.atelierclient.com/api/UserProfiles', {
+      fetch(`${process.env.LOUPE_API_BASE_URL}/api/UserProfiles`, {
         headers: { 'Authorization': `Bearer ${token}` }
       }),
-      fetch('https://enterprise.ft3.atelierclient.com/index.php?route=atelier_enterprise_api/company/init', {
+      fetch(`${process.env.LOUPE_API_BASE_URL}/index.php?route=atelier_enterprise_api/company/init`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
     ]);
@@ -265,7 +265,6 @@ async function fetchProfiles(token) {
       companyProfile
     };
   } catch (error) {
-    // Pass through 401 errors
     if (error.status === 401) {
       throw error;
     }
@@ -312,7 +311,7 @@ app.get('/chat/stream', requireAuth, async (req, res) => {
     const { userProfile, companyProfile } = await fetchProfiles(req.token);
     
     const command = new InvokeModelWithResponseStreamCommand({
-      modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+      modelId: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-5-sonnet-20240620-v1:0',
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify(createMessageBody(message, conversationId, userProfile, companyProfile))
@@ -412,7 +411,7 @@ app.post('/auth/refresh', async (req, res) => {
 // Add user profile endpoint
 app.get('/api/me', requireAuth, async (req, res) => {
   try {
-    const response = await fetch('https://enterprise.ft3.atelierclient.com/api/UserProfiles', {
+    const response = await fetch(`${process.env.LOUPE_API_BASE_URL}/api/UserProfiles`, {
       headers: {
         'Authorization': `Bearer ${req.token}`
       }
@@ -433,7 +432,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
 // Add company profile endpoint
 app.get('/api/company', requireAuth, async (req, res) => {
   try {
-    const response = await fetch('https://enterprise.ft3.atelierclient.com/index.php?route=atelier_enterprise_api/company/init', {
+    const response = await fetch(`${process.env.LOUPE_API_BASE_URL}/index.php?route=atelier_enterprise_api/company/init`, {
       headers: {
         'Authorization': `Bearer ${req.token}`
       }
@@ -451,4 +450,4 @@ app.get('/api/company', requireAuth, async (req, res) => {
   }
 });
 
-app.listen(3000, () => console.log('Server running on http://localhost:3000'));
+app.listen(process.env.PORT || 3000, () => console.log(`Server running on http://localhost:${process.env.PORT || 3000}`));
