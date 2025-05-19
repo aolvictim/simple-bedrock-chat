@@ -324,6 +324,9 @@
         });
 
         if (!response.ok) {
+          // Clear tokens and redirect to login
+          localStorage.removeItem('tokens');
+          window.location.href = '/auth/login';
           throw new Error('Token refresh failed');
         }
 
@@ -339,6 +342,8 @@
         return true;
       } catch (error) {
         console.error('Token refresh failed:', error);
+        localStorage.removeItem('tokens');
+        window.location.href = '/auth/login';
         return false;
       }
     }
@@ -359,26 +364,27 @@
     async function checkAuthStatus() {
       const tokensStr = localStorage.getItem('tokens');
       if (!tokensStr) {
-        window.location.href = '/auth/login';
+        showLogin();
         return;
       }
 
       const tokens = JSON.parse(tokensStr);
       const accessToken = tokens?.accessToken?.accessToken;
       if (!accessToken) {
-        window.location.href = '/auth/login';
+        showLogin();
         return;
       }
 
       try {
         // Try to make a request to a protected endpoint
-        const response = await fetch('/chat/stream?message=ping', {
+        const response = await fetch('/api/me', {
           headers: {
             'Authorization': `Bearer ${accessToken}`
           }
         });
         
         if (response.ok) {
+          console.log('Auth check passed');
           showChat();
         } else {
           if (response.status === 401) {
@@ -387,18 +393,19 @@
               checkAuthStatus(); // Try again with new token
             }
           } else {
-            window.location.href = '/auth/login';
+            showLogin();
           }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
-        window.location.href = '/auth/login';
+        showLogin();
       }
     }
 
     function showLogin() {
       chatInterface.style.display = 'none';
       userInfoDiv.innerHTML = '';
+      window.location.href = '/auth/login';
     }
 
     async function fetchUserProfile(accessToken) {
@@ -563,9 +570,21 @@
     });
 
     userInput.addEventListener('keydown', (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !sendButton.disabled) {
-        e.preventDefault();
-        sendMessage();
+      if (e.key === 'Enter') {
+        if (e.metaKey || e.ctrlKey) {
+          // Cmd+Enter or Ctrl+Enter: Add new line
+          const start = userInput.selectionStart;
+          const end = userInput.selectionEnd;
+          const value = userInput.value;
+          userInput.value = value.substring(0, start) + '\n' + value.substring(end);
+          userInput.selectionStart = userInput.selectionEnd = start + 1;
+          userInput.style.height = 'auto';
+          userInput.style.height = userInput.scrollHeight + 'px';
+        } else if (!e.shiftKey && !sendButton.disabled) {
+          // Enter: Send message
+          e.preventDefault();
+          sendMessage();
+        }
       }
     });
 
